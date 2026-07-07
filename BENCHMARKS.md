@@ -27,9 +27,9 @@ so a load test can swap one and hold everything else constant:
 
 | Deployment | Image | Runtime | Tier | Source (sibling folder) |
 |------------|-------|---------|------|------|
-| `app`        | `my-vue-app:local`     | Node / Koa (Flight)      | edge | `flight` + `my-vue-app` — *not published* |
-| `app-bun`    | `my-vue-app-bun:local` | **Bun** (flight-bun)     | edge | `flight-bun` + `my-vue-app-bun` — on GitHub |
-| `scribe`     | `scribe:local`         | Node / Express (Scribe)  | data | `scribe` — *not published* |
+| `app`        | `my-vue-app:local`     | Node / Koa (Flight)      | edge | `flight-node` + `vue-app-flight-node` |
+| `app-bun`    | `my-vue-app-bun:local` | **Bun** (flight-bun)     | edge | `flight-bun` + `vue-app-flight` |
+| `scribe`     | `scribe:local`         | Node / Express (Scribe)  | data | `scribe-node` |
 | `scribe-bun` | `scribe-bun:local`     | **Bun** (scribe-bun)     | data | `scribe-bun` — on GitHub |
 | `postgres`   | `postgres:16-alpine`   | —                        | db   | (upstream) |
 | `pgbouncer`  | `edoburu/pgbouncer`    | —                        | pool | (upstream) |
@@ -79,21 +79,18 @@ git clone https://github.com/VasilenL/scribe-bun.git                     # Bun d
 git clone https://github.com/VasilenL/vue-app-flight.git my-vue-app-bun  # ⚠ clone AS my-vue-app-bun
 
 # Node stack (for the OG / fixed configs — see "Comparing OG vs fixed vs Bun")
-git clone https://github.com/VasilenL/flight-node.git  flight            # ⚠ clone AS flight
-git clone https://github.com/VasilenL/scribe-node.git  scribe            # ⚠ clone AS scribe
-#   each carries two branches: main/master = OG baseline, perf-fixes = the Day 1 fixes
+git clone https://github.com/VasilenL/flight-node.git         flight       # ⚠ clone AS flight
+git clone https://github.com/VasilenL/scribe-node.git         scribe       # ⚠ clone AS scribe
+git clone https://github.com/VasilenL/vue-app-flight-node.git my-vue-app   # ⚠ clone AS my-vue-app
+#   flight/scribe each carry two branches: main/master = OG baseline, perf-fixes = the Day 1 fixes
 ```
 
 Then run every command below from the **`flight-scribe-setup/`** clone.
 
-> **Bun-only vs full A/B.** The first four repos are enough for the **Bun** stack
-> (`app-bun` + `scribe-bun`) — pass `BUN_ONLY=1` in Steps 1–2. For the **Node** configs (OG /
-> fixed) also clone `flight-node` + `scribe-node` (above) and drop `BUN_ONLY`.
->
-> **Still unpublished:** the Node *edge* SPA (`my-vue-app`, the Koa-served Vue app that becomes
-> the `app` image) isn't on GitHub yet — building the `app` deployment needs that repo present
-> as a sibling `my-vue-app/`. The data-tier comparison (OG/fixed `scribe` vs `scribe-bun`
-> behind a constant `app-bun` front-end) works without it.
+> **Bun-only vs full A/B.** The Bun repos (`flight-bun`, `scribe-bun`, `vue-app-flight`) are
+> enough for the **Bun** stack (`app-bun` + `scribe-bun`) — pass `BUN_ONLY=1` in Steps 1–2. For
+> the full Node-vs-Bun comparison, also clone the three Node repos above and drop `BUN_ONLY`.
+> All tiers are now published, so a fresh clone can build every config.
 
 ## Step 1 — Build the images
 
