@@ -149,6 +149,16 @@ git --version
 The **repos** are cloned in [Step 0](#step-0--clone-the-repos). All commands below assume
 you're in the `flight-scribe-setup/` clone with `KUBECONFIG` exported as above.
 
+> **Common setup pitfalls** (avoid them by following the steps in order):
+> - After `sudo usermod -aG docker "$USER"`, **log out and back in** (or run `newgrp docker`)
+>   before building — otherwise `docker` still needs sudo, and `load-images.sh` (which refuses
+>   to run as root) will fail.
+> - Run `setup-k3s.sh` **as your normal user, not with `sudo`** — it elevates internally where
+>   it needs root.
+> - Cloning needs **no token or login** — all the repos are public. A token is only required
+>   to *push* changes back, so you don't need one on a machine that's just running the stack.
+> - k3s is **Linux-only** — this won't run on macOS/Windows without a Linux VM.
+
 ---
 
 ## Step 0 — Clone the repos
