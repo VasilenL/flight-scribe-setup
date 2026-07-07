@@ -71,18 +71,29 @@ sibling folder name, so the folder names matter (note the **rename** below):
 ```bash
 mkdir -p ~/stack && cd ~/stack
 
-git clone https://github.com/VasilenL/flight-scribe-setup.git          # deploy scripts + this guide
-git clone https://github.com/VasilenL/flight-bun.git                   # Bun edge tier
-git clone https://github.com/VasilenL/scribe-bun.git                   # Bun data tier
-git clone https://github.com/VasilenL/vue-app-flight.git my-vue-app-bun  # ⚠ MUST clone as my-vue-app-bun
+git clone https://github.com/VasilenL/flight-scribe-setup.git            # deploy scripts + this guide
+
+# Bun stack
+git clone https://github.com/VasilenL/flight-bun.git                     # Bun edge tier
+git clone https://github.com/VasilenL/scribe-bun.git                     # Bun data tier
+git clone https://github.com/VasilenL/vue-app-flight.git my-vue-app-bun  # ⚠ clone AS my-vue-app-bun
+
+# Node stack (for the OG / fixed configs — see "Comparing OG vs fixed vs Bun")
+git clone https://github.com/VasilenL/flight-node.git  flight            # ⚠ clone AS flight
+git clone https://github.com/VasilenL/scribe-node.git  scribe            # ⚠ clone AS scribe
+#   each carries two branches: main/master = OG baseline, perf-fixes = the Day 1 fixes
 ```
 
 Then run every command below from the **`flight-scribe-setup/`** clone.
 
-> **Bun-only vs full A/B.** Those four repos are enough to build and run the **Bun** stack
-> (`app-bun` + `scribe-bun`) — pass `BUN_ONLY=1` in Steps 1–2. The **Node** side of the
-> comparison (`flight`, `my-vue-app`, `scribe`) isn't published; to run Node-vs-Bun, add
-> those three as siblings and drop `BUN_ONLY`.
+> **Bun-only vs full A/B.** The first four repos are enough for the **Bun** stack
+> (`app-bun` + `scribe-bun`) — pass `BUN_ONLY=1` in Steps 1–2. For the **Node** configs (OG /
+> fixed) also clone `flight-node` + `scribe-node` (above) and drop `BUN_ONLY`.
+>
+> **Still unpublished:** the Node *edge* SPA (`my-vue-app`, the Koa-served Vue app that becomes
+> the `app` image) isn't on GitHub yet — building the `app` deployment needs that repo present
+> as a sibling `my-vue-app/`. The data-tier comparison (OG/fixed `scribe` vs `scribe-bun`
+> behind a constant `app-bun` front-end) works without it.
 
 ## Step 1 — Build the images
 
@@ -200,8 +211,8 @@ write-path fixes *and* the Bun rewrite on the same cluster:
 | **3 · Bun** | flight-bun (`app-bun`) | scribe-bun (`scribe-bun`) | the rewrites |
 
 The Node source variant is chosen by which **git branch** is checked out in `../flight` and
-`../scribe` when you build. (These are the `thoughtpivot/flight` + `thoughtpivot/scribe` forks;
-the fixes live on a local `perf-fixes` branch, with `main`/`master` left as pristine OG.)
+`../scribe` when you build. They're cloned from `VasilenL/flight-node` + `VasilenL/scribe-node`:
+`main`/`master` = pristine OG baseline, `perf-fixes` = the Day 1 fixes.
 
 **What config 2 fixes, vs config 1:**
 - **Scribe `ensureSchema`** — run `CREATE`/`ALTER TABLE` once per column-set per process
