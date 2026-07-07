@@ -188,6 +188,58 @@ RAMP=1 sh deploy/k8s/loadtest/run.sh                   # step VUs to trace the k
 
 ---
 
+## Comparing OG vs fixed vs Bun (three configurations)
+
+The stack runs three variants of the Node tiers so you can measure the impact of the Day 1
+write-path fixes *and* the Bun rewrite on the same cluster:
+
+| Config | Flight (edge) | Scribe (data) | Selected by |
+|--------|---------------|---------------|-------------|
+| **1 · OG** | `flight` @ `main` | `scribe` @ `master` | unmodified upstream |
+| **2 · Fixed** | `flight` @ `perf-fixes` | `scribe` @ `perf-fixes` | the Day 1 fixes |
+| **3 · Bun** | flight-bun (`app-bun`) | scribe-bun (`scribe-bun`) | the rewrites |
+
+The Node source variant is chosen by which **git branch** is checked out in `../flight` and
+`../scribe` when you build. (These are the `thoughtpivot/flight` + `thoughtpivot/scribe` forks;
+the fixes live on a local `perf-fixes` branch, with `main`/`master` left as pristine OG.)
+
+**What config 2 fixes, vs config 1:**
+- **Scribe `ensureSchema`** — run `CREATE`/`ALTER TABLE` once per column-set per process
+  instead of on every insert. The per-insert `ALTER TABLE … ADD COLUMN` takes an
+  `ACCESS EXCLUSIVE` lock even as a no-op, serializing all writes. This is the big win.
+- **Scribe `SCRIBE_WORKERS`** cap + PgBouncer tolerance.
+- **Flight `FLIGHT_RATE_LIMIT_*`** — makes the hardcoded 1200/min-per-IP limit disable-able.
+
+> **OG caveat:** OG Flight *cannot* disable its 1200/min-per-IP rate limit (making it
+> configurable is the fix). So config 1 throttles hard under load — that's precisely the Day 1
+> "congestion collapse." Config 2 sets `FLIGHT_RATE_LIMIT_DISABLE=true` (already in `30-app.yaml`).
+
+**Switch the Node tiers (config 1 ↔ 2)** — checkout, rebuild, reload, restart:
+
+```bash
+git -C ../flight checkout main       && git -C ../scribe checkout master       # → OG
+# or:
+git -C ../flight checkout perf-fixes && git -C ../scribe checkout perf-fixes   # → Fixed
+
+sh deploy/build.sh                                  # rebuild :local from the checked-out branch
+sh deploy/k8s/load-images.sh                        # re-import into k3s
+kubectl -n flight-scribe rollout restart deploy/app deploy/scribe
+kubectl -n flight-scribe rollout status  deploy/app deploy/scribe
+```
+
+**Run each config** (in-cluster, isolates the stack, truncates after):
+
+```bash
+VUS=1000 DURATION=3m sh deploy/k8s/loadtest/ab.sh app       # config 1 or 2 (Node: app → scribe)
+VUS=1000 DURATION=3m sh deploy/k8s/loadtest/ab.sh app-bun   # config 3 (Bun: app-bun → scribe-bun)
+```
+
+> Needs the **full** stack (not `BUN_ONLY`) so `app` + `scribe` exist. For a fair comparison,
+> give `app`/`app-bun` matching CPU limits (and likewise `scribe`/`scribe-bun`) in their
+> manifests, and hold `VUS`/`DURATION` constant across all three.
+
+---
+
 ## Watching what happens
 
 In separate terminals during a run:
