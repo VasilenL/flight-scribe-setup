@@ -22,8 +22,10 @@ services:
         environment:
             SCRIBE_APP_MODE: development
             SCRIBE_APP_PORT: '1337'
-            # Postgres/Redis reachable by compose service name on the shared network.
-            SCRIBE_APP_DB_HOST: postgres
+            # Go through the PgBouncer pooler (service name on the shared network), same as k3s.
+            # (For an OG-Scribe run, switch this back to `postgres` — see the pgbouncer note in
+            # docker-compose.yml.)
+            SCRIBE_APP_DB_HOST: pgbouncer
             SCRIBE_APP_DB_PORT: '5432'
             SCRIBE_APP_DB_USER: scribe
             SCRIBE_APP_DB_PASS: scribe
@@ -44,8 +46,8 @@ services:
         extra_hosts:
             - 'host.docker.internal:host-gateway'
         depends_on:
-            postgres:
-                condition: service_healthy
+            pgbouncer:
+                condition: service_started
             redis:
                 condition: service_healthy
 

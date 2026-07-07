@@ -1,8 +1,8 @@
 # Local dev infrastructure for the Flight + Scribe stack.
 #
-# This compose file runs ONLY the shared infrastructure (Postgres, Redis, Caddy).
+# This compose file runs ONLY the shared infrastructure (Postgres, PgBouncer, Redis, Caddy).
 # Flight and Scribe themselves run as Node processes on the host (see README),
-# reaching Postgres/Redis over the published localhost ports below.
+# reaching Postgres/PgBouncer/Redis over the published localhost ports below.
 #
 # Caddy sits in front of Flight only. Scribe is intentionally never exposed.
 name: flight-scribe-dev
@@ -23,6 +23,36 @@ services:
             interval: 5s
             timeout: 3s
             retries: 10
+
+    # Connection pooler in front of Postgres (transaction pooling) — the same tier the k3s
+    # stack uses, and the piece that "makes it fly" under write load: many client connections
+    # multiplex onto a small warm pool of real PG backends. Containerized Scribe connects here
+    # instead of straight to Postgres; also published on host :6432 so a host-run Scribe can
+    # pool too (set SCRIBE_APP_DB_PORT=6432).
+    #
+    # NOTE: pooling needs the schema-once + PgBouncer-tolerant Scribe (the perf-fixes branch,
+    # or scribe-bun). OG Scribe's CREATE DATABASE bootstrap can't reach the maintenance DB
+    # through the pooler — for an OG run, point Scribe back at postgres:5432.
+    pgbouncer:
+        image: edoburu/pgbouncer:latest
+        environment:
+            DB_HOST: postgres
+            DB_PORT: '5432'
+            DB_USER: scribe
+            DB_PASSWORD: scribe
+            DB_NAME: scribe
+            # Postgres 16 defaults to scram-sha-256; PgBouncer must SCRAM-auth through to it.
+            AUTH_TYPE: scram-sha-256
+            POOL_MODE: transaction
+            MAX_CLIENT_CONN: '2000'
+            DEFAULT_POOL_SIZE: '250'
+            MIN_POOL_SIZE: '10'
+            RESERVE_POOL_SIZE: '10'
+        ports:
+            - '6432:5432'
+        depends_on:
+            postgres:
+                condition: service_healthy
 
     redis:
         image: redis:7-alpine
