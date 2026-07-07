@@ -11,6 +11,40 @@ tests — Node vs **Bun** at both the edge tier (Flight vs flight-bun) and the d
 
 ---
 
+## Quickstart — the Bun stack (with PgBouncer), from scratch
+
+The fully-Bun path — `app-bun → scribe-bun → pgbouncer → postgres`, no Node repos needed.
+The steps are explained in detail below; this is the copy-paste version.
+
+```bash
+# clone (4 repos for Bun-only) — note the folder rename on the last one
+mkdir -p ~/stack && cd ~/stack
+git clone https://github.com/VasilenL/flight-scribe-setup.git
+git clone https://github.com/VasilenL/flight-bun.git
+git clone https://github.com/VasilenL/scribe-bun.git
+git clone https://github.com/VasilenL/vue-app-flight.git my-vue-app-bun
+cd flight-scribe-setup
+
+# build + bring up (Bun only — skips the Node app/scribe tiers)
+BUN_ONLY=1 sh deploy/build.sh
+BUN_ONLY=1 sh deploy/k8s/setup-k3s.sh          # run as your user, NOT sudo
+
+# verify — hit app-bun directly (Caddy fronts the Node app, which BUN_ONLY doesn't deploy)
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl -n flight-scribe get pods              # postgres, redis, pgbouncer, scribe-bun, app-bun, caddy
+kubectl -n flight-scribe port-forward svc/app-bun 3000:3000 &
+curl http://127.0.0.1:3000/api/notes           # [] — app-bun → scribe-bun → pgbouncer → postgres
+kill %1
+
+# benchmark
+VUS=3000 DURATION=3m sh deploy/k8s/loadtest/ab.sh app-bun
+```
+
+For the full Node-vs-Bun comparison (three configs), see
+[Comparing OG vs fixed vs Bun](#comparing-og-vs-fixed-vs-bun-three-configurations).
+
+---
+
 ## What gets benchmarked
 
 The stack is a 3-tier pipeline. Each request flows:
