@@ -83,17 +83,71 @@ The two tiers connect through env vars you can flip live:
 
 ## Prerequisites
 
-- **Linux host you can `sudo` on** (k3s runs as a root systemd service).
-- **Docker** (Desktop or engine) — used to build the images and `docker save` them into k3s.
-- **The repos cloned as siblings** under one parent dir — see [Step 0](#step-0--clone-the-repos).
-- **k6** is *not* needed locally — the A/B runner pulls `grafana/k6` and runs it **inside the
-  cluster**.
+You need a **Linux host you can `sudo` on**. k3s runs as a root systemd service and is
+**Linux-only** — on macOS/Windows you'd run it inside a Linux VM (Docker Desktop alone does
+*not* provide a k3s cluster).
 
-All commands below assume you're in the `flight-scribe-setup/` clone and, for `kubectl`:
+| Tool | Needed for | How it gets there |
+|------|-----------|-------------------|
+| **Docker** | build the images + load them into k3s | install manually (below) |
+| **git**, **curl** | clone the repos, install k3s | install manually (below) |
+| **k3s** (bundles `kubectl`) | the cluster | **auto-installed** by `setup-k3s.sh` (Step 2) |
+| **Helm** | Prometheus/Grafana | **auto-installed** by `setup-k3s.sh` |
+| **Bun** | *optional* — running flight-bun/scribe-bun directly for local dev | install manually (below) |
+| **k6** | load generation | *not needed locally* — pulled + run inside the cluster |
+
+> **Bun note:** the images build Bun *inside* Docker (`oven/bun`), so you do **not** need Bun
+> on the host for the k3s benchmark. Install it only for local dev of the Bun tiers.
+
+### Install the tools
+
+**Docker** (Engine — build images + `docker save` into k3s):
+
+```bash
+# Fedora / RHEL
+sudo dnf -y install dnf-plugins-core
+sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"      # then LOG OUT/IN so `docker` works without sudo
+
+# Debian / Ubuntu
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker "$USER"      # then LOG OUT/IN
+```
+
+**git + curl** (usually already present):
+
+```bash
+sudo dnf -y install git curl                              # Fedora / RHEL
+sudo apt-get update && sudo apt-get -y install git curl   # Debian / Ubuntu
+```
+
+**Bun** — *optional*, host-side dev only (not required for the benchmark):
+
+```bash
+curl -fsSL https://bun.sh/install | bash    # restart your shell afterwards
+bun --version
+```
+
+**k3s + kubectl + Helm** — **don't install these by hand.** `deploy/k8s/setup-k3s.sh` (Step 2)
+installs k3s (which bundles `kubectl`) and Helm on first run, and — on Fedora/RHEL — opens the
+firewall for pod/service traffic. After it has run once:
 
 ```bash
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl version
 ```
+
+### Sanity check before you start
+
+```bash
+docker run --rm hello-world   # confirms Docker works WITHOUT sudo (you re-logged in after usermod)
+git --version
+```
+
+The **repos** are cloned in [Step 0](#step-0--clone-the-repos). All commands below assume
+you're in the `flight-scribe-setup/` clone with `KUBECONFIG` exported as above.
 
 ---
 
