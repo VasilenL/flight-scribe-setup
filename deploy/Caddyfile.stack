@@ -1,0 +1,10 @@
+# Reverse proxy in front of the containerized app tier (Flight prod).
+# In k8s this role is played by an Ingress; here it mirrors the dev Caddy.
+:80 {
+	encode gzip zstd
+	reverse_proxy app:3000
+	log {
+		output stdout
+		format console
+	}
+}

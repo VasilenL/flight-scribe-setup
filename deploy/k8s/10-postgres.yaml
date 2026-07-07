@@ -1,0 +1,89 @@
+# Postgres — the data store. Single instance (Postgres doesn't scale horizontally
+# without replication); persisted on a PVC via k3s's built-in local-path provisioner.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres
+  namespace: flight-scribe
+type: Opaque
+stringData:
+  POSTGRES_USER: scribe
+  POSTGRES_PASSWORD: scribe
+  POSTGRES_DB: scribe
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: flight-scribe
+spec:
+  clusterIP: None           # headless: clients resolve straight to the pod
+  selector:
+    app: postgres
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: flight-scribe
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          # Raise the connection ceiling (default 100 -> 200) so the PgBouncer pool can grow.
+          # synchronous_commit=off: don't block each COMMIT on the WAL fsync (async flush ~200ms).
+          # Multiplies small-write throughput; on a hard crash you lose ≤200ms of commits but the
+          # DB is never corrupted. Fine for a perf cluster.
+          args: ["-c", "max_connections=1000", "-c", "synchronous_commit=off"]
+          envFrom:
+            - secretRef:
+                name: postgres
+          env:
+            # keep PGDATA in a subdir so the volume root can hold lost+found etc.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "scribe"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "scribe"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "10"
+              memory: "8Gi"   # headroom for up to ~800 pooled backends
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

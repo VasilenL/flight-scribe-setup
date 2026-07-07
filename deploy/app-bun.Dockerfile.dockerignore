@@ -1,0 +1,9 @@
+# Context is /home/vasilen — send ONLY the two projects we need, minus their heavy dirs.
+*
+!flight-bun
+!my-vue-app-bun
+flight-bun/node_modules
+my-vue-app-bun/node_modules
+my-vue-app-bun/dist
+**/.git
+**/*.log

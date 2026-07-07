@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.claude/
+student-app/
+.env
+**/.env
+*.local
+*.log
+.DS_Store

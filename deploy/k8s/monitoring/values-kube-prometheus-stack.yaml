@@ -1,0 +1,31 @@
+# Helm values for kube-prometheus-stack (Prometheus + Grafana + node-exporter +
+# kube-state-metrics + Alertmanager). Covers cpu / memory / network per node & pod.
+#
+#   helm install monitoring prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace \
+#     -f deploy/k8s/monitoring/values-kube-prometheus-stack.yaml
+
+# Pick up ServiceMonitors in ANY namespace regardless of release label (so our
+# Caddy ServiceMonitor is scraped without fiddly label matching).
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 6h
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        memory: "1500Mi"
+
+grafana:
+  adminPassword: admin        # change me; dashboards for cluster/pod cpu/mem/net ship built-in
+  service:
+    type: LoadBalancer        # k3s servicelb gives it a node IP (port 80)
+
+# node-exporter (host cpu/mem/net/disk) and kube-state-metrics (k8s object state)
+# are enabled by default in this chart — leaving them on.
+alertmanager:
+  enabled: false              # not needed for a local perf cluster

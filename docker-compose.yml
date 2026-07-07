@@ -1,0 +1,60 @@
+# Local dev infrastructure for the Flight + Scribe stack.
+#
+# This compose file runs ONLY the shared infrastructure (Postgres, Redis, Caddy).
+# Flight and Scribe themselves run as Node processes on the host (see README),
+# reaching Postgres/Redis over the published localhost ports below.
+#
+# Caddy sits in front of Flight only. Scribe is intentionally never exposed.
+name: flight-scribe-dev
+
+services:
+    postgres:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: scribe
+            POSTGRES_PASSWORD: scribe
+            POSTGRES_DB: scribe
+        ports:
+            - '5432:5432'
+        volumes:
+            - pgdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U scribe']
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+    redis:
+        image: redis:7-alpine
+        command: ['redis-server', '--appendonly', 'yes']
+        ports:
+            - '6379:6379'
+        volumes:
+            - redisdata:/data
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+    caddy:
+        image: caddy:2-alpine
+        ports:
+            - '8080:80'
+            - '8443:443'
+        volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile:ro
+            - caddydata:/data
+            - caddyconfig:/config
+        # Lets the container reach a Flight process running on the host at :3000.
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        depends_on:
+            - postgres
+            - redis
+
+volumes:
+    pgdata:
+    redisdata:
+    caddydata:
+    caddyconfig:

@@ -1,0 +1,66 @@
+# PgBouncer — connection pooler in front of Postgres. Scribe connects here instead of
+# straight to postgres; PgBouncer multiplexes many client connections onto a small warm
+# pool of real PG connections (transaction pooling). Biggest win on real/multi-node
+# clusters where opening a PG connection over the network is costly, and when scaling
+# scribe replicas (keeps total PG backends bounded).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: flight-scribe
+spec:
+  selector:
+    app: pgbouncer
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: flight-scribe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:latest    # pin a version for real use
+          env:
+            - { name: DB_HOST, value: postgres }
+            - { name: DB_PORT, value: "5432" }
+            - { name: DB_USER, value: scribe }
+            - { name: DB_PASSWORD, value: scribe }
+            - { name: DB_NAME, value: scribe }
+            - { name: POOL_MODE, value: transaction }
+            # scram-sha-256 (PG16 default): edoburu writes a plaintext userlist from
+            # DB_USER/DB_PASSWORD, which PgBouncer needs to SCRAM-auth THROUGH to Postgres.
+            # (AUTH_TYPE=trust left PgBouncer with no usable password for the server hop.)
+            - { name: AUTH_TYPE, value: scram-sha-256 }
+            # many client conns → a bounded warm pool of real PG backends (keep < PG max_connections=100).
+            - { name: MAX_CLIENT_CONN, value: "8000" }
+            - { name: DEFAULT_POOL_SIZE, value: "800" }
+            - { name: MIN_POOL_SIZE, value: "10" }
+            - { name: RESERVE_POOL_SIZE, value: "10" }
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"

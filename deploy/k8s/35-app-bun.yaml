@@ -1,0 +1,65 @@
+# app-bun — the Bun/Bun.serve twin of the `app` deployment, for A/B benchmarking.
+# Identical resources, replicas, and data tier (points at the SAME scribe) so a load
+# test isolates the server runtime. flight-bun v1 has no sessions/redis/rate-limit.
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-bun
+  namespace: flight-scribe
+  labels:
+    app: app-bun
+spec:
+  selector:
+    app: app-bun
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-bun
+  namespace: flight-scribe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: app-bun
+  template:
+    metadata:
+      labels:
+        app: app-bun
+    spec:
+      containers:
+        - name: app-bun
+          image: my-vue-app-bun:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FLIGHT_MODE
+              value: production
+            - name: FLIGHT_PORT
+              value: "3000"
+            - name: SCRIBE_BASE_URL
+              value: http://scribe:1337
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "512Mi"

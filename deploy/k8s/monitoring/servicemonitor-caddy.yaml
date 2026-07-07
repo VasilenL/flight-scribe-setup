@@ -1,0 +1,23 @@
+# Tells Prometheus to scrape Caddy's admin metrics endpoint. Apply AFTER the
+# kube-prometheus-stack Helm release (it provides the ServiceMonitor CRD).
+#
+# Useful queries once scraped:
+#   p95 edge latency:
+#     histogram_quantile(0.95, sum(rate(caddy_http_request_duration_seconds_bucket[1m])) by (le))
+#   request rate:
+#     sum(rate(caddy_http_requests_total[1m]))
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: caddy
+  namespace: flight-scribe
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      monitoring: caddy
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

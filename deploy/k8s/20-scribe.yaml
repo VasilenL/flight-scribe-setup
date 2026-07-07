@@ -1,0 +1,86 @@
+# Scribe — data tier. Independently scalable (bump `replicas`); the ClusterIP
+# Service below round-robins across scribe pods.
+#
+# Worker count is capped by SCRIBE_WORKERS (below) — without it Scribe forks one
+# worker per HOST cpu (os.cpus() ignores the container limit) and OOMs on big nodes.
+# Scale horizontally via `replicas`; keep SCRIBE_WORKERS in step with limits.cpu.
+apiVersion: v1
+kind: Service
+metadata:
+  name: scribe
+  namespace: flight-scribe
+spec:
+  selector:
+    app: scribe
+  ports:
+    - name: http
+      port: 1337
+      targetPort: 1337
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scribe
+  namespace: flight-scribe
+spec:
+  replicas: 8
+  selector:
+    matchLabels:
+      app: scribe
+  template:
+    metadata:
+      labels:
+        app: scribe
+    spec:
+      containers:
+        - name: scribe
+          image: scribe:local
+          imagePullPolicy: IfNotPresent   # image is imported into k3s, not pulled
+          env:
+            # Cap cluster workers (defaults to node CPU count otherwise → OOM on big nodes).
+            # Keep this in step with resources.limits.cpu below.
+            - name: SCRIBE_WORKERS
+              value: "2"
+            - name: SCRIBE_APP_MODE
+              value: production
+            - name: SCRIBE_APP_PORT
+              value: "1337"
+            # Route DB traffic through PgBouncer (pooler) instead of straight to Postgres.
+            - name: SCRIBE_APP_DB_HOST
+              value: pgbouncer
+            - name: SCRIBE_APP_DB_PORT
+              value: "5432"
+            - name: SCRIBE_APP_DB_USER
+              value: scribe
+            - name: SCRIBE_APP_DB_PASS
+              value: scribe
+            - name: SCRIBE_APP_DB_NAME
+              value: scribe
+            - name: SCRIBE_APP_REDIS_HOST
+              value: redis
+            - name: SCRIBE_APP_REDIS_PORT
+              value: "6379"
+            - name: SCRIBE_APP_REDIS_SCHEMA_DB
+              value: "1"
+            # Scribe fetches each component's JSON Schema from Flight (the app).
+            - name: SCRIBE_APP_SCHEMA_BASE_URL
+              value: http://app:3000
+          ports:
+            - containerPort: 1337
+          readinessProbe:
+            tcpSocket:
+              port: 1337
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 1337
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"

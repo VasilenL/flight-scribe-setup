@@ -1,0 +1,19 @@
+# Reverse proxy in front of Flight (the business-logic / edge tier).
+#
+# Scribe (the data tier) is deliberately NOT proxied here — it must stay on the
+# private network. Only Flight is public-facing.
+#
+# Reachable at http://localhost:8080 once `docker compose up` is running and a
+# Flight process is listening on host port 3000.
+
+:80 {
+	encode gzip zstd
+
+	# host.docker.internal resolves to the host via extra_hosts in docker-compose.
+	reverse_proxy host.docker.internal:3000
+
+	log {
+		output stdout
+		format console
+	}
+}

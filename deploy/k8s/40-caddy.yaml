@@ -1,0 +1,103 @@
+# Caddy — the edge load balancer. Exposed to the host via a LoadBalancer Service
+# (k3s's built-in servicelb/klipper assigns a node IP on :80). Reverse-proxies to
+# the `app` Service, which in turn balances across app pods.
+#
+# Caddy's admin endpoint exposes Prometheus metrics on :2019/metrics — that's the
+# source of edge request-latency histograms (caddy_http_request_duration_seconds).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddy-config
+  namespace: flight-scribe
+data:
+  Caddyfile: |
+    {
+      admin 0.0.0.0:2019
+      servers {
+        metrics
+      }
+    }
+    :80 {
+      encode gzip zstd
+      reverse_proxy app:3000
+      log {
+        output stdout
+        format console
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: flight-scribe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: caddy
+  template:
+    metadata:
+      labels:
+        app: caddy
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2-alpine
+          ports:
+            - name: http
+              containerPort: 80
+            - name: metrics
+              containerPort: 2019
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "1"
+              memory: "128Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/caddy/Caddyfile
+              subPath: Caddyfile
+      volumes:
+        - name: config
+          configMap:
+            name: caddy-config
+---
+# External entrypoint. On k3s this gets a node IP via servicelb; hit http://<node-ip>/
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: flight-scribe
+spec:
+  type: LoadBalancer
+  selector:
+    app: caddy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+# Scrape target for Prometheus (edge latency/throughput metrics).
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy-metrics
+  namespace: flight-scribe
+  labels:
+    app: caddy
+    monitoring: caddy
+spec:
+  selector:
+    app: caddy
+  ports:
+    - name: metrics
+      port: 2019
+      targetPort: 2019

@@ -1,0 +1,98 @@
+# Fully-containerized stack (no host Node processes) — a local stand-in for the
+# k8s deployment, to verify the images before shipping them to a cluster.
+#
+#   ./deploy/build.sh                                   # build the 3 images
+#   docker compose -f deploy/docker-compose.stack.yml up -d
+#
+# Distinct project name + host ports so it does NOT collide with the dev stack.
+#   App (Flight prod, UI + API): http://localhost:3100   (direct)
+#                                http://localhost:8090   (via Caddy)
+name: flight-scribe-stack
+
+services:
+    postgres:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: scribe
+            POSTGRES_PASSWORD: scribe
+            POSTGRES_DB: scribe
+        ports:
+            - '127.0.0.1:5433:5432'
+        volumes:
+            - stack_pgdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U scribe']
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+    redis:
+        image: redis:7-alpine
+        command: ['redis-server', '--appendonly', 'yes']
+        volumes:
+            - stack_redisdata:/data
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+    scribe:
+        image: scribe:local
+        environment:
+            SCRIBE_APP_MODE: production
+            SCRIBE_APP_PORT: '1337'
+            SCRIBE_APP_DB_HOST: postgres
+            SCRIBE_APP_DB_PORT: '5432'
+            SCRIBE_APP_DB_USER: scribe
+            SCRIBE_APP_DB_PASS: scribe
+            SCRIBE_APP_DB_NAME: scribe
+            SCRIBE_APP_REDIS_HOST: redis
+            SCRIBE_APP_REDIS_PORT: '6379'
+            SCRIBE_APP_REDIS_SCHEMA_DB: '1'
+            # Scribe validates writes against the schema Flight serves.
+            SCRIBE_APP_SCHEMA_BASE_URL: http://app:3000
+        # NB: Scribe forks one worker per CPU (os.cpus()) regardless of this cap;
+        # this only limits scheduling. Real worker-count control needs a code change.
+        cpus: 2
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+
+    app:
+        image: my-vue-app:local
+        environment:
+            FLIGHT_APP_SECRET: change-me-perf-test
+            FLIGHT_REDIS_HOST: redis
+            FLIGHT_REDIS_PORT: '6379'
+            SCRIBE_BASE_URL: http://scribe:1337
+            FLIGHT_MAX_WORKERS: '2'
+            # Behind Caddy/ingress: trust X-Forwarded-For.
+            FLIGHT_TRUST_PROXY: 'true'
+            # PERF NOTE: production has a 1200 req/min per-IP limit. This skips it
+            # for GET/HEAD /api reads; POST/DELETE are still limited (see summary).
+            FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES: '/api'
+        ports:
+            - '127.0.0.1:3100:3000'
+        depends_on:
+            redis:
+                condition: service_healthy
+            scribe:
+                condition: service_started
+
+    caddy:
+        image: caddy:2-alpine
+        ports:
+            - '127.0.0.1:8090:80'
+        volumes:
+            - ./Caddyfile.stack:/etc/caddy/Caddyfile:ro
+            - stack_caddydata:/data
+        depends_on:
+            - app
+
+volumes:
+    stack_pgdata:
+    stack_redisdata:
+    stack_caddydata:

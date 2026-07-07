@@ -1,0 +1,94 @@
+# App tier — Flight (production) serving the built Vue SPA + /api on :3000.
+# Independently scalable via `replicas` (and the HPA in 60-hpa.yaml). The
+# ClusterIP Service round-robins across app pods; Caddy proxies to this Service.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app
+  namespace: flight-scribe
+type: Opaque
+stringData:
+  # CHANGE ME for anything but a throwaway perf cluster.
+  FLIGHT_APP_SECRET: change-me-perf-cluster
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  namespace: flight-scribe
+  labels:
+    app: app
+spec:
+  selector:
+    app: app
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: flight-scribe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+        - name: app
+          image: my-vue-app:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FLIGHT_MODE
+              value: production
+            - name: FLIGHT_PORT
+              value: "3000"
+            # One Flight worker per allotted CPU (keep in step with limits.cpu).
+            - name: FLIGHT_MAX_WORKERS
+              value: "2"
+            - name: FLIGHT_REDIS_HOST
+              value: redis
+            - name: FLIGHT_REDIS_PORT
+              value: "6379"
+            - name: SCRIBE_BASE_URL
+              value: http://scribe:1337
+            # Behind Caddy: trust X-Forwarded-For (so per-client rate-limit keying works).
+            - name: FLIGHT_TRUST_PROXY
+              value: "true"
+            # Rate limiting OFF for load testing. For a protected deploy, remove
+            # DISABLE and instead set FLIGHT_RATE_LIMIT_MAX (per-IP per minute).
+            - name: FLIGHT_RATE_LIMIT_DISABLE
+              value: "true"
+            - name: FLIGHT_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app
+                  key: FLIGHT_APP_SECRET
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /              # served statically by Flight (no scribe dependency)
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "512Mi"

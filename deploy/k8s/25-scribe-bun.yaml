@@ -1,0 +1,69 @@
+# scribe-bun — the Bun/Bun.serve rewrite of the data tier, A/B twin of `scribe`.
+# Same Postgres/PgBouncer, same schema source, same resources — only the runtime + the
+# cached-Ajv fix differ. To A/B: point an app tier's SCRIBE_BASE_URL at `scribe` vs `scribe-bun`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: scribe-bun
+  namespace: flight-scribe
+spec:
+  selector:
+    app: scribe-bun
+  ports:
+    - name: http
+      port: 1337
+      targetPort: 1337
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scribe-bun
+  namespace: flight-scribe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scribe-bun
+  template:
+    metadata:
+      labels:
+        app: scribe-bun
+    spec:
+      containers:
+        - name: scribe-bun
+          image: scribe-bun:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SCRIBE_APP_MODE, value: production }
+            - { name: SCRIBE_APP_PORT, value: "1337" }
+            - { name: SCRIBE_APP_DB_HOST, value: pgbouncer }
+            - { name: SCRIBE_APP_DB_PORT, value: "5432" }
+            - { name: SCRIBE_APP_DB_USER, value: scribe }
+            - { name: SCRIBE_APP_DB_PASS, value: scribe }
+            - { name: SCRIBE_APP_DB_NAME, value: scribe }
+            - { name: SCRIBE_APP_REDIS_HOST, value: redis }
+            - { name: SCRIBE_APP_REDIS_PORT, value: "6379" }
+            - { name: SCRIBE_APP_REDIS_SCHEMA_DB, value: "1" }
+            # Fetch component schemas from the app tier (same schema either app serves).
+            - { name: SCRIBE_APP_SCHEMA_BASE_URL, value: http://app-bun:3000 }
+          ports:
+            - containerPort: 1337
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 1337
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 1337
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
