@@ -12,9 +12,16 @@ if [ "$(id -u)" = "0" ]; then
   exit 1
 fi
 
-for img in my-vue-app:local my-vue-app-bun:local scribe:local scribe-bun:local; do
+# BUN_ONLY=1 imports only the Bun images (matches BUN_ONLY in build.sh / setup-k3s.sh).
+if [ "${BUN_ONLY:-0}" = "1" ]; then
+  IMAGES="my-vue-app-bun:local scribe-bun:local"
+else
+  IMAGES="my-vue-app:local my-vue-app-bun:local scribe:local scribe-bun:local"
+fi
+
+for img in $IMAGES; do
   if ! docker image inspect "$img" >/dev/null 2>&1; then
-    echo "ERROR: image '$img' not found. Run 'sh deploy/build.sh' first." >&2
+    echo "ERROR: image '$img' not found. Run 'sh deploy/build.sh' first (BUN_ONLY=1 if Bun-only)." >&2
     exit 1
   fi
   echo "==> importing $img into k3s"

@@ -41,11 +41,21 @@ if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/nu
 fi
 
 # 2) Import the locally-built images into k3s containerd (docker save as user)
-sh "$HERE/load-images.sh"
+BUN_ONLY="${BUN_ONLY:-0}" sh "$HERE/load-images.sh"
 
-# 3) Apply the app stack (dir is non-recursive, so monitoring/ is skipped here)
+# 3) Apply the app stack (dir is non-recursive, so monitoring/ is skipped here).
+#    BUN_ONLY=1 skips the Node-tier deployments (app, scribe) whose images aren't built.
 echo "==> applying stack manifests"
-kubectl apply -f "$HERE/"
+if [ "${BUN_ONLY:-0}" = "1" ]; then
+  for f in "$HERE"/*.yaml; do
+    case "$(basename "$f")" in
+      20-scribe.yaml|30-app.yaml) echo "   (BUN_ONLY: skipping $(basename "$f"))"; continue ;;
+    esac
+    kubectl apply -f "$f"
+  done
+else
+  kubectl apply -f "$HERE/"
+fi
 
 # 4) Observability: Helm + kube-prometheus-stack
 if ! command -v helm >/dev/null 2>&1; then

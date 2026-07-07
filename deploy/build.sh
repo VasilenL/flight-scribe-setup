@@ -6,14 +6,20 @@ set -e
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(cd -- "$HERE/../.." && pwd)   # /home/vasilen
 
-echo "==> flightjs:local   (context: $ROOT/flight)"
-docker build -f "$HERE/flight.Dockerfile" -t flightjs:local "$ROOT/flight"
+# BUN_ONLY=1 skips the Node-tier images (flightjs, my-vue-app, scribe) — build only the Bun
+# stack (scribe-bun + my-vue-app-bun). Those Node repos aren't required for a Bun-only run.
+if [ "${BUN_ONLY:-0}" = "1" ]; then
+  echo "==> BUN_ONLY=1 — skipping Node images (flightjs, my-vue-app, scribe)"
+else
+  echo "==> flightjs:local   (context: $ROOT/flight)"
+  docker build -f "$HERE/flight.Dockerfile" -t flightjs:local "$ROOT/flight"
 
-echo "==> my-vue-app:local (context: $ROOT/my-vue-app)"
-docker build -f "$HERE/app.Dockerfile" -t my-vue-app:local "$ROOT/my-vue-app"
+  echo "==> my-vue-app:local (context: $ROOT/my-vue-app)"
+  docker build -f "$HERE/app.Dockerfile" -t my-vue-app:local "$ROOT/my-vue-app"
 
-echo "==> scribe:local     (context: $ROOT/scribe)"
-docker build -f "$HERE/scribe.Dockerfile" -t scribe:local "$ROOT/scribe"
+  echo "==> scribe:local     (context: $ROOT/scribe)"
+  docker build -f "$HERE/scribe.Dockerfile" -t scribe:local "$ROOT/scribe"
+fi
 
 echo "==> scribe-bun:local (context: $ROOT/scribe-bun)"
 docker build -f "$HERE/scribe-bun.Dockerfile" -t scribe-bun:local "$ROOT/scribe-bun"

@@ -25,12 +25,12 @@ client ─▶ Caddy :80 ─▶ app / app-bun :3000 ─▶ scribe / scribe-bun :1
 Two tiers each have a **Node** implementation and a **Bun** rewrite, deployed side by side
 so a load test can swap one and hold everything else constant:
 
-| Deployment | Image | Runtime | Tier | Repo |
+| Deployment | Image | Runtime | Tier | Source (sibling folder) |
 |------------|-------|---------|------|------|
-| `app`        | `my-vue-app:local`     | Node / Koa (Flight)      | edge | `../flight` + `../my-vue-app` |
-| `app-bun`    | `my-vue-app-bun:local` | **Bun** (flight-bun)     | edge | `../flight-bun` + `../my-vue-app-bun` |
-| `scribe`     | `scribe:local`         | Node / Express (Scribe)  | data | `../scribe` |
-| `scribe-bun` | `scribe-bun:local`     | **Bun** (scribe-bun)     | data | `../scribe-bun` |
+| `app`        | `my-vue-app:local`     | Node / Koa (Flight)      | edge | `flight` + `my-vue-app` — *not published* |
+| `app-bun`    | `my-vue-app-bun:local` | **Bun** (flight-bun)     | edge | `flight-bun` + `my-vue-app-bun` — on GitHub |
+| `scribe`     | `scribe:local`         | Node / Express (Scribe)  | data | `scribe` — *not published* |
+| `scribe-bun` | `scribe-bun:local`     | **Bun** (scribe-bun)     | data | `scribe-bun` — on GitHub |
 | `postgres`   | `postgres:16-alpine`   | —                        | db   | (upstream) |
 | `pgbouncer`  | `edoburu/pgbouncer`    | —                        | pool | (upstream) |
 | `redis`      | `redis`                | —                        | cache| (upstream) |
@@ -51,13 +51,11 @@ The two tiers connect through env vars you can flip live:
 
 - **Linux host you can `sudo` on** (k3s runs as a root systemd service).
 - **Docker** (Desktop or engine) — used to build the images and `docker save` them into k3s.
-- **The sibling repos checked out next to this one**, under the same parent dir
-  (default `/home/vasilen`): `flight`, `flight-bun`, `scribe`, `scribe-bun`, `my-vue-app`,
-  `my-vue-app-bun`. The build script uses these as build contexts.
+- **The repos cloned as siblings** under one parent dir — see [Step 0](#step-0--clone-the-repos).
 - **k6** is *not* needed locally — the A/B runner pulls `grafana/k6` and runs it **inside the
   cluster**.
 
-All commands below assume you're in the repo root (`flight-scribe-dev/`) and, for `kubectl`:
+All commands below assume you're in the `flight-scribe-setup/` clone and, for `kubectl`:
 
 ```bash
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -65,30 +63,58 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
 ---
 
+## Step 0 — Clone the repos
+
+All repos must sit under **one parent directory** — the build scripts reference each other by
+sibling folder name, so the folder names matter (note the **rename** below):
+
+```bash
+mkdir -p ~/stack && cd ~/stack
+
+git clone https://github.com/VasilenL/flight-scribe-setup.git          # deploy scripts + this guide
+git clone https://github.com/VasilenL/flight-bun.git                   # Bun edge tier
+git clone https://github.com/VasilenL/scribe-bun.git                   # Bun data tier
+git clone https://github.com/VasilenL/vue-app-flight.git my-vue-app-bun  # ⚠ MUST clone as my-vue-app-bun
+```
+
+Then run every command below from the **`flight-scribe-setup/`** clone.
+
+> **Bun-only vs full A/B.** Those four repos are enough to build and run the **Bun** stack
+> (`app-bun` + `scribe-bun`) — pass `BUN_ONLY=1` in Steps 1–2. The **Node** side of the
+> comparison (`flight`, `my-vue-app`, `scribe`) isn't published; to run Node-vs-Bun, add
+> those three as siblings and drop `BUN_ONLY`.
+
 ## Step 1 — Build the images
 
 ```bash
-sh deploy/build.sh
+BUN_ONLY=1 sh deploy/build.sh   # Bun stack only: scribe-bun:local + my-vue-app-bun:local
+sh deploy/build.sh              # full: also flightjs / my-vue-app / scribe (needs the Node repos)
 ```
 
-Builds `flightjs:local`, `my-vue-app:local`, `scribe:local`, `scribe-bun:local`, and
-`my-vue-app-bun:local` from the sibling repos. Re-run this whenever you change any tier's
-source. (If `docker build` fails on `/var/run/docker.sock`, start Docker Desktop and
-`docker context use desktop-linux`.)
+Builds `scribe-bun:local` + `my-vue-app-bun:local` — and, without `BUN_ONLY`, also the Node
+images `flightjs:local`, `my-vue-app:local`, `scribe:local` — from the sibling repos. Re-run
+whenever you change a tier's source. (If `docker build` fails on `/var/run/docker.sock`, start
+Docker Desktop and `docker context use desktop-linux`.)
 
 ## Step 2 — Bring up the cluster
 
 ```bash
-sh deploy/k8s/setup-k3s.sh          # run as your user, NOT sudo — it elevates internally
+BUN_ONLY=1 sh deploy/k8s/setup-k3s.sh   # Bun stack only — run as your user, NOT sudo
+sh deploy/k8s/setup-k3s.sh              # full stack (needs the Node images built)
 ```
 
 This one-shot script:
 1. installs k3s (no Traefik — Caddy fronts instead; keeps servicelb + metrics-server),
 2. on Fedora/RHEL, trusts the pod/service CIDRs in `firewalld` (else pods can't reach each other),
-3. imports the local images into k3s's containerd (`deploy/k8s/load-images.sh`),
-4. applies every manifest in `deploy/k8s/` (namespace, postgres, pgbouncer, redis, scribe,
-   scribe-bun, app, app-bun, caddy),
+3. imports the local images into k3s's containerd (`deploy/k8s/load-images.sh` — `BUN_ONLY` imports only the Bun images),
+4. applies the manifests in `deploy/k8s/` (namespace, postgres, pgbouncer, redis, scribe,
+   scribe-bun, app, app-bun, caddy) — with `BUN_ONLY=1` it **skips the `app` and `scribe`
+   Node deployments** whose images aren't built,
 5. installs kube-prometheus-stack (Grafana/Prometheus) + the Caddy ServiceMonitor.
+
+> **Bun-only caveat:** with `BUN_ONLY`, only the `app-bun` + `scribe-bun` tiers exist, so use
+> the in-cluster A/B runner (`ab.sh app-bun`, below). The through-Caddy `run.sh` path targets
+> the Node `app` deployment, which isn't present in a Bun-only cluster.
 
 ## Step 3 — Verify it's up
 
