@@ -40,8 +40,11 @@ spec:
               value: production
             - name: FLIGHT_PORT
               value: "3000"
+            # Default to the Bun data tier so the stack works out of the box (incl. BUN_ONLY,
+            # where the Node `scribe` isn't deployed). The A/B flips this to http://scribe:1337
+            # to test the Node data tier — see BENCHMARKS.md "Comparing OG vs fixed vs Bun".
             - name: SCRIBE_BASE_URL
-              value: http://scribe:1337
+              value: http://scribe-bun:1337
           ports:
             - containerPort: 3000
           readinessProbe:

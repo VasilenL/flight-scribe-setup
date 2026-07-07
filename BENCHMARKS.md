@@ -127,10 +127,25 @@ This one-shot script:
 ## Step 3 — Verify it's up
 
 ```bash
-kubectl -n flight-scribe get pods                 # all Running
-kubectl -n flight-scribe get svc caddy -o wide    # note the EXTERNAL-IP (node IP)
-curl http://<node-ip>/api/notes                    # [] once scribe has a table
+kubectl -n flight-scribe get pods                 # all Running (BUN_ONLY: no app/scribe pods)
 ```
+
+**Full stack** — Caddy fronts the Node `app`, so you can hit it directly:
+```bash
+kubectl -n flight-scribe get svc caddy -o wide    # note the EXTERNAL-IP (node IP)
+curl http://<node-ip>/api/notes                   # [] once the table exists
+```
+
+**Bun-only** — Caddy proxies to the Node `app`, which isn't deployed under `BUN_ONLY`, so
+verify `app-bun` directly instead (this is also exactly what the benchmark hits):
+```bash
+kubectl -n flight-scribe port-forward svc/app-bun 3000:3000 &
+curl http://127.0.0.1:3000/api/notes              # [] — app-bun → scribe-bun → pgbouncer → postgres
+kill %1
+```
+
+Either way, the real check is just running the benchmark (Step 4): `ab.sh app-bun` drives
+`app-bun → scribe-bun → pgbouncer → postgres` entirely in-cluster.
 
 ---
 
