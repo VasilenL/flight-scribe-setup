@@ -1,0 +1,32 @@
+# Benchmark-only "database" stand-in (Day-6 hop-vs-insert experiment): returns 200 on any
+# request. Point scribe-bun's SCRIBE_APP_FAKE_UPSTREAM_URL=http://fakedb at it to skip Postgres.
+#
+# LESSON (why nginx, not http-echo): a per-request outbound fetch from scribe collapsed under
+# load — the upstream didn't keep connections alive, so every request paid a fresh TCP setup
+# (kube-proxy DNAT + conntrack per connection). That is SLOWER than the DB path, which reuses a
+# warm pg-promise pool. Even with nginx keep-alive it caps well below the pooled DB. Takeaway:
+# connection pooling is what makes the real write path fast; an unpooled hop is not a fair
+# DB stand-in, so this experiment can't cleanly isolate "hop cost" from "insert cost".
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: fakedb, namespace: flight-scribe }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: fakedb } }
+  template:
+    metadata: { labels: { app: fakedb } }
+    spec:
+      containers:
+        - name: echo
+          image: nginx:alpine          # keep-alive capable (http-echo was not)
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: "100m", memory: "16Mi" }
+            limits: { cpu: "2", memory: "64Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: fakedb, namespace: flight-scribe }
+spec:
+  selector: { app: fakedb }
+  ports: [{ port: 80, targetPort: 80 }]

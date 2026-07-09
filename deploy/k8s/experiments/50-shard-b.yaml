@@ -1,0 +1,179 @@
+# Shard B — a SECOND, independent Postgres instance (own WAL + lock space) with its own
+# PgBouncer and scribe-bun deployment. Writes are spread across shard A (postgres) and
+# shard B (postgres-b) by the `scribe-sharded` Service, which fronts BOTH scribe-bun tiers
+# (they share the pod label `shardsvc: bun`). Pure-insert sharding: no key routing needed.
+#
+# NB: experiment scaffolding. Reuses the existing `postgres` Secret (same creds).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-b
+  namespace: flight-scribe
+spec:
+  clusterIP: None
+  selector:
+    app: postgres-b
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-b
+  namespace: flight-scribe
+spec:
+  serviceName: postgres-b
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-b
+  template:
+    metadata:
+      labels:
+        app: postgres-b
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          args: ["-c", "max_connections=1000", "-c", "synchronous_commit=off"]
+          envFrom:
+            - secretRef:
+                name: postgres        # reuse shard A's creds (scribe/scribe/scribe)
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "scribe"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "10", memory: "8Gi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-b
+  namespace: flight-scribe
+spec:
+  selector:
+    app: pgbouncer-b
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer-b
+  namespace: flight-scribe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbouncer-b
+  template:
+    metadata:
+      labels:
+        app: pgbouncer-b
+    spec:
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:latest
+          env:
+            - { name: DB_HOST, value: postgres-b }
+            - { name: DB_PORT, value: "5432" }
+            - { name: DB_USER, value: scribe }
+            - { name: DB_PASSWORD, value: scribe }
+            - { name: DB_NAME, value: scribe }
+            - { name: POOL_MODE, value: transaction }
+            - { name: AUTH_TYPE, value: scram-sha-256 }
+            - { name: MAX_CLIENT_CONN, value: "8000" }
+            - { name: DEFAULT_POOL_SIZE, value: "800" }
+            - { name: MIN_POOL_SIZE, value: "10" }
+            - { name: RESERVE_POOL_SIZE, value: "10" }
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            tcpSocket: { port: 5432 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "50m", memory: "32Mi" }
+            limits: { cpu: "500m", memory: "128Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scribe-bun-b
+  namespace: flight-scribe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scribe-bun-b
+  template:
+    metadata:
+      labels:
+        app: scribe-bun-b
+        shardsvc: bun          # fronted by the `scribe-sharded` Service
+    spec:
+      containers:
+        - name: scribe-bun
+          image: scribe-bun:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SCRIBE_APP_MODE, value: production }
+            - { name: SCRIBE_APP_PORT, value: "1337" }
+            - { name: SCRIBE_APP_DB_HOST, value: pgbouncer-b }   # <-- shard B
+            - { name: SCRIBE_APP_DB_PORT, value: "5432" }
+            - { name: SCRIBE_APP_DB_USER, value: scribe }
+            - { name: SCRIBE_APP_DB_PASS, value: scribe }
+            - { name: SCRIBE_APP_DB_NAME, value: scribe }
+            - { name: SCRIBE_APP_DB_POOL_MAX, value: "250" }
+            - { name: SCRIBE_APP_REDIS_HOST, value: redis }
+            - { name: SCRIBE_APP_REDIS_PORT, value: "6379" }
+            - { name: SCRIBE_APP_REDIS_SCHEMA_DB, value: "1" }
+            - { name: SCRIBE_APP_SCHEMA_BASE_URL, value: http://app-bun:3000 }
+          ports:
+            - containerPort: 1337
+          readinessProbe:
+            httpGet: { path: /, port: 1337 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "500m", memory: "256Mi" }
+            limits: { cpu: "2", memory: "1Gi" }
+---
+# Spans BOTH scribe-bun (shard A) and scribe-bun-b (shard B) via the shared `shardsvc: bun`
+# label → app-bun round-robins writes across the two shards.
+apiVersion: v1
+kind: Service
+metadata:
+  name: scribe-sharded
+  namespace: flight-scribe
+spec:
+  selector:
+    shardsvc: bun
+  ports:
+    - name: http
+      port: 1337
+      targetPort: 1337
