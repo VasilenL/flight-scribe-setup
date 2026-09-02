@@ -44,11 +44,36 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
-          # Raise the connection ceiling (default 100 -> 200) so the PgBouncer pool can grow.
+          # Postgres tuning baked into args (NOT via `ALTER SYSTEM`, which writes to
+          # postgresql.auto.conf inside the PVC and is LOST whenever the volume is recreated by
+          # node-churn recovery — that's why the WAL setting kept reverting to 1GB). These -c
+          # flags are re-applied on every boot from this manifest, so they're churn-proof.
+          #
+          # max_connections=1000: let the PgBouncer pool grow (default 100 is too low).
           # synchronous_commit=off: don't block each COMMIT on the WAL fsync (async flush ~200ms).
-          # Multiplies small-write throughput; on a hard crash you lose ≤200ms of commits but the
-          # DB is never corrupted. Fine for a perf cluster.
-          args: ["-c", "max_connections=1000", "-c", "synchronous_commit=off"]
+          #   Multiplies small-write throughput; on a hard crash you lose ≤200ms of commits but the
+          #   DB is never corrupted. Fine for a perf cluster.
+          # max_wal_size=3GB: raise the WAL-between-checkpoints ceiling well above the default 1GB
+          #   so a sustained write bench doesn't trigger a checkpoint storm (which pins Postgres at
+          #   ~6 cores re-logging full pages for the SAME inserts). Kept at 3GB — NOT higher —
+          #   because the data PVC below is only 5Gi and WAL shares it; a 16GB target would fill
+          #   the volume on a long run and PANIC. Bump both together if you enlarge the PVC.
+          # checkpoint_timeout=15min + completion_target=0.9: fewer, smoother checkpoints (spread
+          #   the I/O over 90% of the interval instead of spiking).
+          # shared_buffers=1GB: bigger page cache than the 128MB default; safe inside the 8Gi limit.
+          args:
+            - "-c"
+            - "max_connections=1000"
+            - "-c"
+            - "synchronous_commit=off"
+            - "-c"
+            - "max_wal_size=3GB"
+            - "-c"
+            - "checkpoint_timeout=15min"
+            - "-c"
+            - "checkpoint_completion_target=0.9"
+            - "-c"
+            - "shared_buffers=1GB"
           envFrom:
             - secretRef:
                 name: postgres
