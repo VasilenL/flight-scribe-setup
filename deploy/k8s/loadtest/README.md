@@ -2,6 +2,48 @@
 
 Fire a fixed number of requests at the app (through Caddy) and watch it scale.
 
+## Which script do I want?
+
+| Script | Path | Use it for |
+|--------|------|-----------|
+| **`ab.sh`** | k6 pod → a Service's ClusterIP, **Caddy out of the path** | **runtime A/B** — the only variable is the tier under test |
+| `run.sh` | k6 pod → through Caddy, the full chain | sustained load that looks right in Grafana |
+| `truncate-notes.sh` | — | reset the tables by hand |
+| `bench-reset.sh` | — | return the cluster to a clean Bun-only baseline |
+
+## `ab.sh` — the A/B runner
+
+```bash
+sh deploy/k8s/loadtest/ab.sh app-bun                        # Bun edge → Bun data tier
+VUS=3000 DURATION=3m sh deploy/k8s/loadtest/ab.sh app-bun
+VUS=3000 DURATION=3m WARMUP=60s sh deploy/k8s/loadtest/ab.sh spring-notes
+```
+
+Targets are any Service exposing `/api/notes` on port **3000** — `app`, `app-bun`, and the
+cross-runtime peers in [`../bench/`](../bench/) (`spring-notes`, `fastapi-notes`).
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `VUS` | `1000` | concurrent virtual users |
+| `DURATION` | `3m` | length of the measured run |
+| `WARMUP` | *(off)* | run a throwaway load of this length first, truncate, **then** measure |
+| `WRITE_RATIO` | `1` | fraction of requests that POST (1 = all inserts) |
+| `NO_TRUNCATE` | *(off)* | skip the post-run truncate |
+| `K6_NAME` | `k6-<target>` | pod name — override to run a second concurrent generator |
+| `K6_CPU_REQ` / `K6_CPU_LIMIT` | `6` / `16` | k6 pod cores (see the warning below) |
+| `K6_MEM_REQ` / `K6_MEM_LIMIT` | `6Gi` / `12Gi` | k6 pod memory |
+
+**`WARMUP` exists for the JVM.** A cold `spring-notes` is still interpreting bytecode, so an
+unwarmed run measures the JIT compiler rather than the runtime. Apply it to *every* stack in
+a comparison, not just Java — identical treatment costs two minutes and removes the
+"you warmed one of them" objection.
+
+> ⚠️ **Don't raise the k6 limits to "use the whole box."** k6 and the stack under test share
+> the same 24 cores: every core k6 reserves is one the stack can't have, and a generator that
+> starves its target produces a number about the generator. If throughput plateaus while
+> every tier coasts, check `kubectl top pods` — if k6 is pegged at its limit, run the
+> generator off-node rather than giving it more of this one.
+
 ## Insert load + auto-truncate (one command)
 
 Runs the note-**insert** test (50k POSTs by default) then truncates the table so each
@@ -16,6 +58,11 @@ Truncate on its own any time:
 ```bash
 sh deploy/k8s/loadtest/truncate-notes.sh
 ```
+
+It covers **both** table families — `notes` / `notes_history` (scribe, scribe-bun) and
+`bench_notes` / `bench_notes_history` (the cross-runtime peers) — truncating each only if it
+exists, so it's a no-op on a Bun-only cluster. Each family is truncated in a single
+statement because the history table carries an `ON DELETE CASCADE` foreign key.
 
 The manual building blocks are below.
 

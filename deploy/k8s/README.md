@@ -82,7 +82,18 @@ instead: `kubectl -n monitoring port-forward svc/monitoring-grafana 8080:80` →
    container CPU limit doesn't change `os.cpus()`. Fixed via the `SCRIBE_WORKERS` env (set to
    `2` in `20-scribe.yaml`); keep it in step with `limits.cpu`. Scale horizontally via `replicas`.
 
-Load testing: see [loadtest/README.md](loadtest/README.md) (k6 / hey, 50k requests).
+## Opt-in subdirectories
+
+`setup-k3s.sh` applies only the top-level `*.yaml` here. These are deployed by hand:
+
+| Dir | What's in it |
+|-----|--------------|
+| [`bench/`](bench/) | Cross-runtime peers — `spring-notes` (Java), `fastapi-notes` (Python), and the Bun Zig-vs-Rust A/B |
+| [`experiments/`](experiments/) | Day-6 experiments — a second Postgres shard, a fake-DB upstream |
+| [`monitoring/`](monitoring/) | Helm values + the Caddy ServiceMonitor (installed by `setup-k3s.sh` through Helm, not `kubectl apply`) |
+
+Load testing: see [loadtest/README.md](loadtest/README.md) (k6 / hey, 50k requests), and
+[BENCHMARKS.md](../../BENCHMARKS.md) for the full A/B procedures.
 
 ## Teardown
 ```bash

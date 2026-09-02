@@ -13,6 +13,12 @@ Neither framework repo is modified — this harness sits beside them:
 └── flight-scribe-dev/   # ← you are here (compose, Caddy, env, docs)
 ```
 
+> **Looking for the benchmarks?** This README covers the **Docker Compose dev loop** only.
+> The k3s performance cluster — Node vs Bun, and Bun vs Java vs Python — lives in
+> **[BENCHMARKS.md](BENCHMARKS.md)**. See also [GUIDE.md](GUIDE.md) (both modes end to end),
+> [deploy/k8s/README.md](deploy/k8s/README.md) (cluster internals), and
+> [docs/scribe-topologies.md](docs/scribe-topologies.md) (where to run scribe, and why).
+
 ---
 
 ## 1. How the two projects work together

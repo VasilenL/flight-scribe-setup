@@ -301,3 +301,7 @@ docker compose -f docker-compose.yml -f docker-compose.scribe.yml down -v
 
 - k8s specifics (per-file rundown, queries): [deploy/k8s/README.md](deploy/k8s/README.md)
 - The original harness notes & known issues: [README.md](README.md)
+- Benchmarking procedures (Node vs Bun, Bun vs Java vs Python): [BENCHMARKS.md](BENCHMARKS.md)
+- Load-generator options and `ab.sh` env knobs: [deploy/k8s/loadtest/README.md](deploy/k8s/loadtest/README.md)
+- Cross-runtime peers (Spring, FastAPI, Zig-vs-Rust): [deploy/k8s/bench/README.md](deploy/k8s/bench/README.md)
+- Where to run scribe (sidecar / shared / sharded) and why: [docs/scribe-topologies.md](docs/scribe-topologies.md)

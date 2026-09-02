@@ -309,6 +309,77 @@ RAMP=1 sh deploy/k8s/loadtest/run.sh                   # step VUs to trace the k
 
 ---
 
+## Cross-runtime — Bun vs Java vs Python (demo runbook)
+
+Three stacks, one Postgres, one harness. `spring-notes` (Spring Boot 4 + Hibernate, virtual
+threads) and `fastapi-notes` (FastAPI + asyncpg + uvicorn) live in
+[`deploy/k8s/bench/`](deploy/k8s/bench/) and are **not** applied by `setup-k3s.sh` — bring
+them up by hand, run them, tear them down.
+
+### Making it a fair fight
+
+The peers are deliberately handicapped to match the Bun stack, because the naive setup
+isn't close:
+
+| | Bun (`app-bun`) | `spring-notes` | `fastapi-notes` |
+|---|---|---|---|
+| CPU ceiling | 2×2 + 2×2 = **8** | 2×4 = **8** | 2×4 = **8** |
+| DB pool / pod | 100 | 100 | 4 workers × 25 = 100 |
+| Inserts per write | 2 (row + history) | **2** | **2** |
+| Network hops | **2** (edge → data → pool) | 1 | 1 |
+
+- **Two inserts, not one.** scribe-bun writes a version-history row on every create
+  ([`db.ts` `createSingle`](../scribe-bun/src/db.ts)). The peers now do the same — see
+  `NoteHistory.java` and `main.py`. Without this the peers were doing half the DB work.
+- **The extra hop is deliberate — it's part of what's being measured.** scribe is a separate
+  data tier on purpose: an independently-scalable, schemaless primitive that owns its tables
+  and its pool (see [`docs/scribe-topologies.md`](docs/scribe-topologies.md)). The peers are
+  single-process CRUD endpoints. So this measures *an architecture against a function*, and
+  the hop is the price of the architecture — quantified here rather than assumed. If you
+  want the hop's cost on its own, topology 1 (scribe as a localhost sidecar) removes the
+  overlay/kube-proxy/conntrack path without changing the design.
+- **The one asymmetry left over:** scribe computes a diff patch per write that the peers
+  don't. That's runtime CPU, not DB work — worth a sentence if anyone asks why Bun's
+  per-request CPU is higher.
+
+### Run it
+
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+cd ~/flight-scribe-dev
+
+# once — build + import + deploy the peers
+docker build -t spring-notes:local  spring-notes
+docker build -t fastapi-notes:local fastapi-notes
+docker save spring-notes:local  | sudo k3s ctr images import -
+docker save fastapi-notes:local | sudo k3s ctr images import -
+kubectl apply -f deploy/k8s/bench/spring-notes.yaml
+kubectl apply -f deploy/k8s/bench/fastapi-notes.yaml
+kubectl -n flight-scribe rollout status deploy/spring-notes deploy/fastapi-notes
+
+# the demo — same VUs, same duration, back to back
+VUS=3000 DURATION=3m               sh deploy/k8s/loadtest/ab.sh app-bun
+VUS=3000 DURATION=3m WARMUP=60s    sh deploy/k8s/loadtest/ab.sh spring-notes
+VUS=3000 DURATION=3m               sh deploy/k8s/loadtest/ab.sh fastapi-notes
+```
+
+`WARMUP` runs a throwaway load, truncates, then measures. **Java needs it** — a cold JVM is
+still interpreting bytecode, so an unwarmed run measures the JIT compiler rather than the
+runtime. Each run truncates the tables afterwards on its own, so the three are independent.
+
+### If it goes sideways — back to Bun-only
+
+```bash
+NO_LOADTEST=1 NO_CONNTRACK=1 sh deploy/k8s/loadtest/bench-reset.sh
+```
+
+Deletes the peers and any stuck k6 pod, re-applies `25-scribe-bun.yaml` + `35-app-bun.yaml`
+(so hand-tuning from the session is reverted), points `app-bun` back at `scribe-bun`, and
+scales both to 2. Takes seconds. Drop `NO_CONNTRACK=1` when you have time for the sudo
+conntrack flush, and `NO_LOADTEST=1` when you want it to prove itself with a baseline run.
+
+---
+
 ## Comparing OG vs fixed vs Bun (three configurations)
 
 The stack runs three variants of the Node tiers so you can measure the impact of the Day 1
