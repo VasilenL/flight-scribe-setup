@@ -41,6 +41,10 @@ spec:
             - { name: SCRIBE_APP_DB_USER, value: scribe }
             - { name: SCRIBE_APP_DB_PASS, value: scribe }
             - { name: SCRIBE_APP_DB_NAME, value: scribe }
+            # 100 connections per pod. Set EXPLICITLY (the code default is 50) so it matches
+            # spring-notes and fastapi-notes — pool size dominates write throughput, so an
+            # unstated default would silently decide the cross-runtime comparison.
+            - { name: SCRIBE_APP_DB_POOL_MAX, value: "100" }
             - { name: SCRIBE_APP_REDIS_HOST, value: redis }
             - { name: SCRIBE_APP_REDIS_PORT, value: "6379" }
             - { name: SCRIBE_APP_REDIS_SCHEMA_DB, value: "1" }

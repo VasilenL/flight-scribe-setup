@@ -1,0 +1,46 @@
+# Cross-runtime benchmark peer: Spring Boot + Hibernate (JPA) doing the canonical
+# POST/GET /api/notes against bench_notes in the shared Postgres (via PgBouncer).
+# Matched resources so `ab.sh spring-notes` compares runtimes fairly.
+#
+# NOT auto-applied by setup-k3s (subdir is skipped). Apply by hand.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: spring-notes, namespace: flight-scribe }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: spring-notes } }
+  template:
+    metadata: { labels: { app: spring-notes } }
+    spec:
+      containers:
+        - name: spring-notes
+          image: spring-notes:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: DB_URL, value: "jdbc:postgresql://pgbouncer:5432/scribe?prepareThreshold=0" }
+            - { name: DB_USER, value: scribe }
+            - { name: DB_PASS, value: scribe }
+            - { name: DB_POOL_MAX, value: "100" }     # 100/pod — matches scribe-bun + fastapi-notes
+          ports: [{ containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8080 }
+            initialDelaySeconds: 12
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8080 }
+            initialDelaySeconds: 40
+            periodSeconds: 10
+          # 2 replicas x 4 = 8 cores of ceiling, matching the Bun stack's total
+          # (app-bun 2x2 + scribe-bun 2x2). Equal budget per STACK, not per pod — only one
+          # stack is under load at a time, so they never contend for it.
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits: { cpu: "4", memory: "2Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: spring-notes, namespace: flight-scribe }
+spec:
+  selector: { app: spring-notes }
+  # Port 3000 so it slots into ab.sh (which hits http://<target>:3000). targetPort = Spring's 8080.
+  ports: [{ name: http, port: 3000, targetPort: 8080 }]

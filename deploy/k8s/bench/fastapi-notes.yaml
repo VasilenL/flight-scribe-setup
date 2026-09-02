@@ -1,0 +1,42 @@
+# Cross-runtime benchmark peer: FastAPI + asyncpg (async Python) doing the canonical
+# POST/GET /api/notes against bench_notes. Matched cores + pool so `ab.sh fastapi-notes`
+# compares it fairly against spring-notes and the Bun stack. NOT auto-applied by setup-k3s.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: fastapi-notes, namespace: flight-scribe }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: fastapi-notes } }
+  template:
+    metadata: { labels: { app: fastapi-notes } }
+    spec:
+      containers:
+        - name: fastapi-notes
+          image: fastapi-notes:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: DB_DSN, value: "postgres://scribe:scribe@pgbouncer:5432/scribe" }
+            - { name: WEB_WORKERS, value: "4" }        # workers = cores (GIL: 1 core per worker)
+            - { name: DB_POOL_MAX, value: "25" }       # per worker → 4 × 25 = 100/pod, matching the others
+          ports: [{ containerPort: 8000 }]
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 4
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          # 2 replicas x 4 = 8 cores of ceiling, matching the Bun stack's total
+          # (app-bun 2x2 + scribe-bun 2x2). WEB_WORKERS is kept equal to the core limit
+          # because the GIL means one Python worker saturates exactly one core.
+          resources:
+            requests: { cpu: "500m", memory: "256Mi" }
+            limits: { cpu: "4", memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: fastapi-notes, namespace: flight-scribe }
+spec:
+  selector: { app: fastapi-notes }
+  ports: [{ name: http, port: 3000, targetPort: 8000 }]   # :3000 so it slots into ab.sh
